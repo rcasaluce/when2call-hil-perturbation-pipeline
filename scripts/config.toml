@@ -3,7 +3,7 @@
 config_version = 1
 
 [paths]
-input_jsonl  = "When2Call/data/test/when2call_test_llm_judge.jsonl"
+input_jsonl = "../When2Call/data/test/when2call_test_llm_judge.jsonl"
 # Se vuoto o omesso, verrà derivato come "<stem>.WORKING_COPY.<mode_key><suffix>"
 output_jsonl = ""
 audit_dir    = "audit"
