@@ -1,0 +1,102 @@
+# config.toml
+
+config_version = 1
+
+[paths]
+input_jsonl  = "When2Call/data/test/when2call_test_llm_judge.jsonl"
+# Se vuoto o omesso, verrà derivato come "<stem>.WORKING_COPY.<mode_key><suffix>"
+output_jsonl = ""
+audit_dir    = "audit"
+
+[run]
+mode_key = "style_concise"     # style_verbose | style_concise | alias tollerati
+tool_field = "tools"
+create_backup_of_target = false
+
+# LLM
+[llm]
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+model    = "gemini-2.5-flash"
+token_env = "TOKEN_GEMINI"     # da env
+seed = ""                      # stringa vuota => None (no seed)
+
+# Completion knobs
+max_tokens = 512
+retry_on_length = true
+retry_max_tokens = 1024
+
+# Patch / IO behavior
+allow_reserialize_fallback = false
+min_sleep_sec_between_calls = 0.0
+
+# Candidate generation
+num_candidates = 2
+candidate_snippet_chars = 160
+
+# Stats printing
+stats_max_token_preview = 8
+stats_max_token_string_len = 48
+
+# Visibility / TTY behavior (Feb 3 patch)
+show_perturbations = true
+raw_key_input = true
+
+# Concise soft target policy
+[length_policy]
+concise_target_ratio = 0.70
+concise_target_min_base_len = 160
+concise_target_min_chars = 80
+
+# Semantic signals
+[semantic]
+enable_embeddings = false
+embedding_model = ""                 # vuoto => disabilitato anche se enable_embeddings=true
+embedding_low_cosine_threshold = 0.85
+
+enable_verifier = false
+verifier_model = ""                  # vuoto => fallback al llm.model
+verifier_max_tokens = 16
+
+# Styles (metto anche i prompt in config, così è davvero “tutto fuori dal codice”)
+[styles.style_verbose]
+max_prev_rewrite_chars = 800
+system = """
+Task: rewrite tool descriptions.
+Hard constraints:
+- Meaning must be preserved exactly; no new capabilities, steps, motivations, benefits, or context.
+- No information present in the original description may be deleted.
+- No new parameter names, IDs, field names, flags, or implementation details may be introduced.
+- If parameter/field names/IDs/flags already appear in the original description, they must be kept.
+- No examples, normative language, or assumptions.
+- The subject (the tool) and scope must remain unchanged.
+- Output must be only the rewritten description text, nothing else.
+- Style: verbose but controlled; concise and complete (1–2 sentences), clear and direct.
+"""
+regen_diversity_instruction = """
+A meaning-equivalent rewrite is required with lexical and syntactic variation from the previous rewrite; the same sentence structure should be avoided.
+"""
+
+[styles.style_concise]
+max_prev_rewrite_chars = 600
+system = """
+Task: rewrite tool descriptions.
+Hard constraints:
+- Meaning must be preserved exactly; no new capabilities, steps, motivations, benefits, or context.
+- No information present in the original description may be deleted.
+- No new parameter names, IDs, field names, flags, or implementation details may be introduced.
+- If parameter/field names/IDs/flags already appear in the original description, they must be kept.
+- No examples, normative language, or assumptions.
+- The subject (the tool) and scope must remain unchanged.
+- Output must be only the rewritten description text, nothing else.
+- Style: concise and controlled; 1 sentence preferred, 2 max.
+- Length constraint: shorter than the base description is preferred; if the base description is already short, the rewrite must not exceed its length.
+- Compression rule: remove redundancy, filler, and hedging while preserving all explicitly stated constraints/details.
+"""
+regen_diversity_instruction = """
+A different paraphrase is required than the previous rewrite. The same sentence skeleton or distinctive phrases must not be reused. Meaning must remain exactly the same; only wording and structure may vary.
+"""
+
+# Alias per tollerare typo/varianti (opzionale ma utile)
+[styles.aliases]
+style_coicnoso = "style_concise"
+style_coinceise = "style_concise"

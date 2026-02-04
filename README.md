@@ -1,3 +1,4 @@
+
 # README — When2Call Tool-Description Perturbation Workflow
 
 ## 1. Purpose and scope
@@ -9,12 +10,12 @@ This workflow produces **controlled perturbations of tool descriptions** for the
 
 The goal is to rewrite each tool’s `description` field **without changing meaning**, while making the text **lexically and syntactically different**. The workflow is **interactive and human-reviewed**: all model proposals are treated as candidates, and an operator explicitly decides what gets written to the dataset.
 
-The dataset format and evaluation context originate from the **When2Call** benchmark released by NVIDIA. ([arXiv][1])
+The dataset format and evaluation context originate from the **When2Call** benchmark released by NVIDIA. ([arXiv][1])  
 Repository reference (upstream source):
 
 ```text
 https://github.com/NVIDIA/When2Call.git
-```
+````
 
 ---
 
@@ -85,7 +86,7 @@ For each tool instance in the dataset:
 
 2. **Generate K candidates**
 
-   * K is configurable (`NUM_CANDIDATES`, default `2`).
+   * K is configurable (default `2`).
    * Temperature is `0.0` for stability.
    * Optional seed is passed when supported; metadata records whether it was applied.
 
@@ -392,48 +393,201 @@ This supports later reporting and debugging without relying on terminal transcri
 
 ---
 
-## 13. Configuration knobs (environment variables)
+## 13. Configuration (config.toml “single source of truth” + env overrides)
 
-Key configuration points:
+This workflow supports a **TOML configuration file** (recommended) loaded via `config_loader.py`, with optional environment-variable overrides for compatibility and quick experimentation.
 
-### Input / output selection
+### 13.1 Precedence model
 
-* `INPUT_JSONL` — input dataset JSONL
-* `OUTPUT_JSONL` — working copy output path (if not set, derived from input + mode)
+The effective configuration is resolved in this order:
 
-### Mode and model
+1. **`config.toml`** values (base configuration)
+2. **Environment overrides** (only for a defined set of variables, see §13.4)
+3. **Hard defaults** (only when neither TOML nor env provides a value)
 
-* `MODE_KEY` — `style_concise` or `style_verbose`
-* `LLM_MODEL` — model name (default: `gemini-2.5-flash`)
-* `TOKEN_GEMINI` — API token (required)
+**Security rule:** the API token is **never stored in TOML**. The token is always read from an environment variable (default: `TOKEN_GEMINI`, configurable via `llm.token_env`).
 
-### Candidate generation
+### 13.2 Reference “opera d’arte” config.toml (complete example)
 
-* `NUM_CANDIDATES` — K candidates per tool (default `2`)
-* `GEMINI_SEED` — optional seed; may be ignored by provider
-* `GEMINI_MAX_TOKENS` — max tokens per generation (default `512`)
-* `GEMINI_RETRY_MAX_TOKENS` — retry budget if the first output is truncated
-* `MIN_SLEEP_SEC_BETWEEN_CALLS` — throttling between calls
+Save this as `config.toml` at repo root (or point to it via `--config` / `CONFIG_PATH`):
 
-### Length policy (concise)
+```toml
+# =========================
+# When2Call perturbation config
+# =========================
 
-* `CONCISE_TARGET_RATIO`
-* `CONCISE_TARGET_MIN_BASE_LEN`
-* `CONCISE_TARGET_MIN_CHARS`
+[paths]
+# Required: input dataset JSONL
+input_jsonl = "When2Call/data/test/when2call_test_llm_judge.jsonl"
 
-### Visibility / interaction safety
+# Optional: working copy output path. If empty, a derived name is used:
+# "<input_stem>.WORKING_COPY.<mode_key>.jsonl"
+output_jsonl = ""
 
-* `SHOW_PERTURBATIONS` — prints perturbation context for each candidate generation
-* `RAW_KEY_INPUT` — enables Esc-safe raw key handling on TTY
+# Optional: audit directory (resumable JSONL logs)
+audit_dir = "audit"
 
-### Optional semantic signals
 
-* `ENABLE_EMBEDDINGS`
-* `EMBEDDING_MODEL`
-* `EMBEDDING_LOW_COSINE_THRESHOLD`
-* `ENABLE_VERIFIER`
-* `VERIFIER_MODEL`
-* `VERIFIER_MAX_TOKENS`
+[run]
+# Which rewrite style to apply
+# Supported: "style_concise", "style_verbose"
+mode_key = "style_concise"
+
+# JSON field containing tool entries in each record
+tool_field = "tools"
+
+# Whether to create a one-time backup of the target JSONL (".bak")
+create_backup_of_target = false
+
+
+[llm]
+# OpenAI-compatible Gemini endpoint base URL
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+# Model name (OpenAI-compatible)
+model = "gemini-2.5-flash"
+
+# Name of the environment variable that stores the API token
+# (token value must be exported before running)
+token_env = "TOKEN_GEMINI"
+
+# Optional deterministic seed (may be ignored by provider)
+seed = 12345
+
+# Generation budget
+max_tokens = 512
+
+# Retry with a larger budget only if output was truncated (finish_reason == "length")
+retry_on_length = true
+retry_max_tokens = 1024
+
+# If raw JSON-string patching fails, allow fallback by decoding+reserializing tool entry
+# (default false to preserve upstream formatting)
+allow_reserialize_fallback = false
+
+# Throttle between calls (seconds)
+min_sleep_sec_between_calls = 0.0
+
+# Candidates per tool instance
+num_candidates = 2
+
+# Candidate snippet length printed in overview
+candidate_snippet_chars = 160
+
+# Stats printing limits
+stats_max_token_preview = 8
+stats_max_token_string_len = 48
+
+# Visibility / interaction safety
+show_perturbations = true
+raw_key_input = true
+
+
+[length_policy]
+# Soft target for concise style (guidance only)
+concise_target_ratio = 0.70
+concise_target_min_base_len = 160
+concise_target_min_chars = 80
+
+
+[semantic]
+# Optional semantic signals (disabled by default)
+
+enable_embeddings = false
+embedding_model = ""                  # must be set if enable_embeddings = true
+embedding_low_cosine_threshold = 0.85
+
+enable_verifier = false
+verifier_model = ""                   # empty means "use llm.model"
+verifier_max_tokens = 16
+
+
+[styles]
+# NOTE:
+# The notebook ships with in-code STYLE_SPECS for style_verbose/style_concise.
+# The [styles] table is kept for forward compatibility / extensions.
+# The alias map below is actively used.
+
+[styles.aliases]
+# Optional: tolerate alternate names / typos / external naming
+concise = "style_concise"
+verbose  = "style_verbose"
+style_coicnoso  = "style_concise"
+style_coinceise = "style_concise"
+```
+
+### 13.3 Fields: what is required vs optional
+
+**Required in TOML:**
+
+* `paths.input_jsonl`
+* `llm.base_url`
+* `llm.model`
+
+**Required in ENV at runtime:**
+
+* the token env referenced by `llm.token_env` (default `TOKEN_GEMINI`)
+
+Everything else has safe defaults.
+
+### 13.4 Environment overrides (compatibility layer)
+
+The loader supports overriding selected TOML fields via environment variables (useful for quick experiments):
+
+* `MODE_KEY` → `run.mode_key`
+
+* `LLM_MODEL` → `llm.model`
+
+* `GEMINI_SEED` → `llm.seed`
+
+* `GEMINI_MAX_TOKENS` → `llm.max_tokens`
+
+* `GEMINI_RETRY_MAX_TOKENS` → `llm.retry_max_tokens`
+
+* `ALLOW_RESERIALIZE_FALLBACK` → `llm.allow_reserialize_fallback`
+
+* `NUM_CANDIDATES` → `llm.num_candidates`
+
+* `MIN_SLEEP_SEC_BETWEEN_CALLS` → `llm.min_sleep_sec_between_calls`
+
+* `STATS_MAX_TOKEN_PREVIEW` → `llm.stats_max_token_preview`
+
+* `STATS_MAX_TOKEN_STRING_LEN` → `llm.stats_max_token_string_len`
+
+* `CANDIDATE_SNIPPET_CHARS` → `llm.candidate_snippet_chars`
+
+* `CONCISE_TARGET_RATIO` → `length_policy.concise_target_ratio`
+
+* `CONCISE_TARGET_MIN_BASE_LEN` → `length_policy.concise_target_min_base_len`
+
+* `CONCISE_TARGET_MIN_CHARS` → `length_policy.concise_target_min_chars`
+
+* `ENABLE_EMBEDDINGS` → `semantic.enable_embeddings`
+
+* `EMBEDDING_MODEL` → `semantic.embedding_model`
+
+* `EMBEDDING_LOW_COSINE_THRESHOLD` → `semantic.embedding_low_cosine_threshold`
+
+* `ENABLE_VERIFIER` → `semantic.enable_verifier`
+
+* `VERIFIER_MODEL` → `semantic.verifier_model`
+
+* `VERIFIER_MAX_TOKENS` → `semantic.verifier_max_tokens`
+
+* `SHOW_PERTURBATIONS` → `llm.show_perturbations`
+
+* `RAW_KEY_INPUT` → `llm.raw_key_input`
+
+### 13.5 Where config lives in the repo
+
+Typical layout:
+
+```text
+variants_generation.ipynb     # main notebook workflow
+config_loader.py              # TOML loader + validation + env overrides
+config.toml                   # your run configuration (recommended)
+audit/                         # resumable audit logs (default)
+```
 
 ---
 
@@ -445,6 +599,7 @@ The workflow assumes the dataset JSONL is available at:
 When2Call/data/test/when2call_test_llm_judge.jsonl
 ```
 
+---
 
 ## 15. Implementation and usage
 
@@ -455,13 +610,16 @@ The workflow is implemented as a Jupyter notebook:
 * `variants_generation.ipynb`
 
 The notebook contains the full interactive rewrite pipeline (candidate generation, metrics, human decisions, audit logging, and dataset patching).
+A small configuration module is used to load `config.toml`:
+
+* `config_loader.py`
 
 ### 15.2 Prerequisites
 
 * Python 3.10+ (recommended)
 * Network access to the Gemini OpenAI-compatible endpoint:
   `https://generativelanguage.googleapis.com/v1beta/openai/`
-* An API token provided via the `TOKEN_GEMINI` environment variable (required)
+* An API token provided via an environment variable (default `TOKEN_GEMINI`, configurable via `llm.token_env`)
 
 ### 15.3 Dependencies (requirements)
 
@@ -488,23 +646,35 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 15.5 Running the notebook
+### 15.5 Running the notebook (recommended path)
 
-Environment variables must be exported before starting the notebook kernel (at minimum `TOKEN_GEMINI`).
-
-Example:
+1. Export the token env referenced by `llm.token_env` (default `TOKEN_GEMINI`):
 
 ```bash
 export TOKEN_GEMINI="..."
-export MODE_KEY="style_concise"   # or "style_verbose"
-export LLM_MODEL="gemini-2.5-flash"
+```
+
+2. Ensure `config.toml` is present (see §13.2). Then start Jupyter:
+
+```bash
 jupyter lab
 ```
 
-Then open and run:
+3. Open and run:
 
 * `variants_generation.ipynb`
 
+**Optional:** if your notebook uses a `--config` argument internally, set:
+
+```bash
+export CONFIG_PATH="config.toml"
+```
+
+(or provide `--config path/to/config.toml` when running as a script).
+
 ---
+
 [1]: https://arxiv.org/pdf/2504.18851 "When2Call: When (not) to Call Tools"
+
+```
 
